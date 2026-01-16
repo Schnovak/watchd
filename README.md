@@ -45,16 +45,15 @@ sudo ./install.sh
 
 ### 1. Configure your ntfy.sh topic
 
-Pick a unique, hard-to-guess topic name (it acts as your password):
+Edit the config file and set your topic (pick a unique, hard-to-guess name):
 
 ```bash
-sudo systemctl edit watchd
+sudo nano /etc/watchd.conf
 ```
 
-Add these lines:
+Change this line:
 ```ini
-[Service]
-Environment=WATCHD_NTFY_URL=https://ntfy.sh/my-secret-topic-abc123
+ntfy_url = https://ntfy.sh/your-secret-topic-here
 ```
 
 ### 2. Enable and start the daemon
@@ -66,7 +65,7 @@ sudo systemctl start watchd
 
 ### 3. Subscribe to notifications
 
-**Option A:** Open `https://ntfy.sh/my-secret-topic-abc123` in your phone's browser
+**Option A:** Open `https://ntfy.sh/your-secret-topic-here` in your phone's browser
 
 **Option B:** Install the [ntfy app](https://ntfy.sh) and subscribe to your topic
 
@@ -109,13 +108,25 @@ Pattern matching is case-insensitive with word boundaries (won't match "terror" 
 
 ## Configuration
 
-Set via `sudo systemctl edit watchd`:
+Config file: `/etc/watchd.conf` (system) or `~/.config/watchd.conf` (user)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `WATCHD_NTFY_URL` | `https://ntfy.sh/watchd-alerts` | Your ntfy.sh topic URL |
-| `WATCHD_SOCKET` | `/tmp/watchd.sock` | UNIX socket path |
-| `WATCHD_LOG` | `/var/log/watchd.log` | Log file location |
+```ini
+# ntfy.sh topic URL
+ntfy_url = https://ntfy.sh/your-secret-topic
+
+# Socket path
+socket = /tmp/watchd.sock
+
+# Log file
+log = /tmp/watchd.log
+```
+
+Environment variables override config file:
+- `WATCHD_NTFY_URL`
+- `WATCHD_SOCKET`
+- `WATCHD_LOG`
+
+**After changing config:** `sudo systemctl restart watchd`
 
 ## Service Management
 
@@ -125,6 +136,7 @@ sudo systemctl status watchd
 
 # View logs
 sudo journalctl -u watchd -f
+cat /tmp/watchd.log
 
 # Restart after config change
 sudo systemctl restart watchd
@@ -180,6 +192,7 @@ sudo systemctl restart watchd
 sudo systemctl stop watchd
 sudo systemctl disable watchd
 sudo rm /etc/systemd/system/watchd.service
+sudo rm /etc/watchd.conf
 sudo rm /usr/local/bin/watchd /usr/local/bin/watch
 sudo systemctl daemon-reload
 ```

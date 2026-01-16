@@ -1,0 +1,11 @@
+# watchd configuration file
+# Copy to /etc/watchd.conf (system-wide) or ~/.config/watchd.conf (user)
+
+# ntfy.sh topic URL - CHANGE THIS to your own topic
+ntfy_url = https://ntfy.sh/your-secret-topic-here
+
+# Socket path (usually no need to change)
+socket = /tmp/watchd.sock
+
+# Log file path
+log = /tmp/watchd.log

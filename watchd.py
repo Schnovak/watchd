@@ -36,10 +36,40 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional
 
-# Configuration
-SOCKET_PATH = os.environ.get('WATCHD_SOCKET', '/tmp/watchd.sock')
-NTFY_URL = os.environ.get('WATCHD_NTFY_URL', 'https://ntfy.sh/watchd-alerts')
-LOG_FILE = os.environ.get('WATCHD_LOG', '/tmp/watchd.log')
+# Configuration paths
+CONFIG_FILE = Path('/etc/watchd.conf')
+USER_CONFIG = Path.home() / '.config' / 'watchd.conf'
+
+def load_config() -> dict:
+    """Load config from file. User config overrides system config."""
+    config = {
+        'socket': '/tmp/watchd.sock',
+        'ntfy_url': 'https://ntfy.sh/watchd-alerts',
+        'log': '/tmp/watchd.log',
+    }
+
+    for path in [CONFIG_FILE, USER_CONFIG]:
+        if path.exists():
+            try:
+                for line in path.read_text().splitlines():
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, value = line.split('=', 1)
+                        config[key.strip().lower()] = value.strip()
+            except OSError:
+                pass
+
+    # Environment variables override file config
+    config['socket'] = os.environ.get('WATCHD_SOCKET', config['socket'])
+    config['ntfy_url'] = os.environ.get('WATCHD_NTFY_URL', config['ntfy_url'])
+    config['log'] = os.environ.get('WATCHD_LOG', config['log'])
+
+    return config
+
+CONFIG = load_config()
+SOCKET_PATH = CONFIG['socket']
+NTFY_URL = CONFIG['ntfy_url']
+LOG_FILE = CONFIG['log']
 
 # Default detection patterns
 DEFAULT_PATTERNS = [
@@ -361,7 +391,7 @@ class Daemon:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(SOCKET_PATH)
-        os.chmod(SOCKET_PATH, 0o600)
+        os.chmod(SOCKET_PATH, 0o666)  # Allow all users to connect
         sock.listen(5)
         sock.setblocking(False)
 
