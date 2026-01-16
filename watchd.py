@@ -194,13 +194,15 @@ class Session:
     """Manages a single PTY session."""
 
     def __init__(self, command: list[str], client_sock: socket.socket,
-                 notifier: Notifier, inactivity_timeout: Optional[int]):
+                 notifier: Notifier, inactivity_timeout: Optional[int],
+                 quiet: bool = False):
         self.command = command
         self.command_str = ' '.join(command)
         self.client = client_sock
         self.notifier = notifier
         self.inactivity_timeout = inactivity_timeout
-        self.detector = PatternDetector(DEFAULT_PATTERNS)
+        self.quiet = quiet  # Skip pattern matching, only notify on exit
+        self.detector = PatternDetector(DEFAULT_PATTERNS) if not quiet else None
         self.master_fd: Optional[int] = None
         self.child_pid: Optional[int] = None
         self.running = True
@@ -297,11 +299,12 @@ class Session:
                     # Send to client
                     self._send_to_client('output', data.decode('utf-8', errors='replace'))
 
-                    # Check patterns
-                    text = data.decode('utf-8', errors='replace')
-                    for event in self.detector.feed(text, self.command_str):
-                        if self.notifier.send(event):
-                            self.notified = True
+                    # Check patterns (unless quiet mode)
+                    if self.detector:
+                        text = data.decode('utf-8', errors='replace')
+                        for event in self.detector.feed(text, self.command_str):
+                            if self.notifier.send(event):
+                                self.notified = True
 
                 elif fd == self.client:
                     # Input from client -> PTY
@@ -471,13 +474,15 @@ class Daemon:
             msg = json.loads(first_line)
             command = msg.get('command', [])
             timeout = msg.get('timeout')
+            quiet = msg.get('quiet', False)
 
             if not command:
                 client.close()
                 return
 
-            log(f'Starting session: {" ".join(command)}')
-            session = Session(command, client, self.notifier, timeout)
+            mode = '(quiet)' if quiet else ''
+            log(f'Starting session {mode}: {" ".join(command)}')
+            session = Session(command, client, self.notifier, timeout, quiet)
             self.sessions.append(session)
             session.start()
 

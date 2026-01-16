@@ -44,6 +44,11 @@ def main():
         help='Inactivity timeout in seconds'
     )
     parser.add_argument(
+        '--quiet', '-q',
+        action='store_true',
+        help='Only notify on exit, skip pattern matching (good for interactive tools)'
+    )
+    parser.add_argument(
         'command',
         nargs=argparse.REMAINDER,
         help='Command to run'
@@ -77,6 +82,7 @@ def main():
     msg = {
         'command': command,
         'timeout': args.timeout,
+        'quiet': args.quiet,
     }
     sock.sendall((json.dumps(msg) + '\n').encode('utf-8'))
 
