@@ -280,7 +280,12 @@ class Session:
                         data = b''
 
                     if not data:
-                        self._finish()
+                        # PTY closed - get exit status
+                        try:
+                            _, status = os.waitpid(self.child_pid, 0)
+                            self._handle_exit(status)
+                        except ChildProcessError:
+                            self._finish()
                         return
 
                     last_activity = time.time()
@@ -344,6 +349,8 @@ class Session:
         else:
             code = 1
 
+        log(f'Command exited with code {code}: {self.command_str}')
+
         if code != 0:
             event = Event(
                 event_type='exit_code',
@@ -353,6 +360,7 @@ class Session:
                 timestamp=time.time(),
                 command=self.command_str,
             )
+            log(f'Sending notification for exit code {code}')
             self.notifier.send(event)
 
         self._send_to_client('exit', str(code))
@@ -396,6 +404,7 @@ class Daemon:
         sock.setblocking(False)
 
         log(f'Daemon started, listening on {SOCKET_PATH}')
+        log(f'Notifications will be sent to: {NTFY_URL}')
 
         def handle_signal(sig, frame):
             log('Shutting down...')
@@ -436,7 +445,10 @@ class Daemon:
                 client.close()
                 return
 
-            msg = json.loads(data.decode('utf-8'))
+            # Parse only the first line (command), ignore rest (resize messages)
+            text = data.decode('utf-8')
+            first_line = text.split('\n')[0]
+            msg = json.loads(first_line)
             command = msg.get('command', [])
             timeout = msg.get('timeout')
 
