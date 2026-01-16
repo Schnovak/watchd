@@ -204,6 +204,8 @@ class Session:
         self.master_fd: Optional[int] = None
         self.child_pid: Optional[int] = None
         self.running = True
+        self.notified = False  # Track if we already sent a notification
+        self.start_time = time.time()
 
     def start(self):
         """Fork PTY and start event loop in thread."""
@@ -268,7 +270,8 @@ class Session:
                         timestamp=time.time(),
                         command=self.command_str,
                     )
-                    self.notifier.send(event)
+                    if self.notifier.send(event):
+                        self.notified = True
                     self._send_to_client('event', json.dumps(asdict(event)))
                     inactivity_notified = True
 
@@ -297,7 +300,8 @@ class Session:
                     # Check patterns
                     text = data.decode('utf-8', errors='replace')
                     for event in self.detector.feed(text, self.command_str):
-                        self.notifier.send(event)
+                        if self.notifier.send(event):
+                            self.notified = True
 
                 elif fd == self.client:
                     # Input from client -> PTY
@@ -349,19 +353,35 @@ class Session:
         else:
             code = 1
 
+        duration = int(time.time() - self.start_time)
+        duration_str = f'{duration}s' if duration < 60 else f'{duration // 60}m {duration % 60}s'
+
         log(f'Command exited with code {code}: {self.command_str}')
 
-        if code != 0:
-            event = Event(
-                event_type='exit_code',
-                message=f'Exited with code {code}',
-                priority='high',
-                tags=['x'],
-                timestamp=time.time(),
-                command=self.command_str,
-            )
-            log(f'Sending notification for exit code {code}')
+        # Always notify on completion if we haven't notified yet
+        if not self.notified:
+            if code == 0:
+                event = Event(
+                    event_type='completed',
+                    message=f'Completed successfully ({duration_str})',
+                    priority='default',
+                    tags=['white_check_mark'],
+                    timestamp=time.time(),
+                    command=self.command_str,
+                )
+            else:
+                event = Event(
+                    event_type='failed',
+                    message=f'Failed with code {code} ({duration_str})',
+                    priority='high',
+                    tags=['x'],
+                    timestamp=time.time(),
+                    command=self.command_str,
+                )
+            log(f'Sending completion notification (code {code})')
             self.notifier.send(event)
+        else:
+            log(f'Skipping notification (already notified during execution)')
 
         self._send_to_client('exit', str(code))
         self._finish()
