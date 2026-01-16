@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""
+watch - CLI client for watchd daemon.
+
+Usage:
+  watch ssh user@host
+  watch python train.py
+  watch --timeout 300 make build
+"""
+
+import argparse
+import fcntl
+import json
+import os
+import select
+import signal
+import socket
+import struct
+import sys
+import termios
+import tty
+
+SOCKET_PATH = os.environ.get('WATCHD_SOCKET', '/tmp/watchd.sock')
+
+
+def get_terminal_size():
+    """Get terminal rows and cols."""
+    try:
+        size = os.get_terminal_size()
+        return size.lines, size.columns
+    except OSError:
+        return 24, 80
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Run a command under watchd monitoring.',
+        usage='watch [options] <command...>'
+    )
+    parser.add_argument(
+        '--timeout', '-t',
+        type=int,
+        default=None,
+        help='Inactivity timeout in seconds'
+    )
+    parser.add_argument(
+        'command',
+        nargs=argparse.REMAINDER,
+        help='Command to run'
+    )
+
+    args = parser.parse_args()
+    command = args.command
+
+    # Skip leading -- if present
+    if command and command[0] == '--':
+        command = command[1:]
+
+    if not command:
+        parser.error('No command specified')
+
+    # Check daemon is running
+    if not os.path.exists(SOCKET_PATH):
+        print('Error: watchd is not running.', file=sys.stderr)
+        print('Start it with: sudo systemctl start watchd', file=sys.stderr)
+        sys.exit(1)
+
+    # Connect to daemon
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        sock.connect(SOCKET_PATH)
+    except (ConnectionRefusedError, FileNotFoundError):
+        print('Error: Cannot connect to watchd.', file=sys.stderr)
+        sys.exit(1)
+
+    # Send command
+    msg = {
+        'command': command,
+        'timeout': args.timeout,
+    }
+    sock.sendall((json.dumps(msg) + '\n').encode('utf-8'))
+
+    # Set up terminal
+    stdin_fd = sys.stdin.fileno()
+    is_tty = sys.stdin.isatty()
+    original_termios = None
+
+    if is_tty:
+        original_termios = termios.tcgetattr(stdin_fd)
+        tty.setraw(stdin_fd)
+
+        # Send initial size
+        rows, cols = get_terminal_size()
+        resize_msg = json.dumps({'type': 'resize', 'rows': rows, 'cols': cols}) + '\n'
+        sock.sendall(resize_msg.encode('utf-8'))
+
+        # Handle resize
+        def handle_resize(sig, frame):
+            rows, cols = get_terminal_size()
+            try:
+                resize_msg = json.dumps({'type': 'resize', 'rows': rows, 'cols': cols}) + '\n'
+                sock.sendall(resize_msg.encode('utf-8'))
+            except OSError:
+                pass
+
+        signal.signal(signal.SIGWINCH, handle_resize)
+
+    exit_code = 0
+    buffer = ''
+
+    try:
+        sock.setblocking(False)
+        if is_tty:
+            fcntl.fcntl(stdin_fd, fcntl.F_SETFL,
+                       fcntl.fcntl(stdin_fd, fcntl.F_GETFL) | os.O_NONBLOCK)
+
+        while True:
+            fds = [sock]
+            if is_tty:
+                fds.append(stdin_fd)
+
+            try:
+                readable, _, _ = select.select(fds, [], [], 0.5)
+            except select.error:
+                continue
+
+            if sock in readable:
+                try:
+                    data = sock.recv(4096)
+                except OSError:
+                    break
+
+                if not data:
+                    break
+
+                buffer += data.decode('utf-8', errors='replace')
+
+                # Process complete messages
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    try:
+                        msg = json.loads(line)
+                        msg_type = msg.get('type')
+
+                        if msg_type == 'output':
+                            sys.stdout.write(msg['data'])
+                            sys.stdout.flush()
+                        elif msg_type == 'exit':
+                            exit_code = int(msg.get('data', 1))
+                            raise StopIteration
+                        elif msg_type == 'event':
+                            pass  # Events handled by daemon
+                    except json.JSONDecodeError:
+                        pass
+
+            if is_tty and stdin_fd in readable:
+                try:
+                    data = os.read(stdin_fd, 4096)
+                    if data:
+                        input_msg = json.dumps({'type': 'input', 'data': data.decode('utf-8', errors='replace')}) + '\n'
+                        sock.sendall(input_msg.encode('utf-8'))
+                except OSError:
+                    pass
+
+    except (StopIteration, KeyboardInterrupt):
+        pass
+    finally:
+        if original_termios:
+            termios.tcsetattr(stdin_fd, termios.TCSAFLUSH, original_termios)
+        sock.close()
+
+    sys.exit(exit_code)
+
+
+if __name__ == '__main__':
+    main()

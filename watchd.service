@@ -1,0 +1,16 @@
+[Unit]
+Description=Console Watcher Daemon
+Documentation=man:watchd(8)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/watchd
+Restart=on-failure
+RestartSec=5
+Environment=WATCHD_SOCKET=/tmp/watchd.sock
+Environment=WATCHD_NTFY_URL=https://ntfy.sh/watchd-alerts
+Environment=WATCHD_LOG=/var/log/watchd.log
+
+[Install]
+WantedBy=multi-user.target
